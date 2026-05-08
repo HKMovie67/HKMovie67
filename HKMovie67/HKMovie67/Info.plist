@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.736766866304-qmrk7iu4dsu2auvioqcju7f4po0gpk91</string>
+			</array>
+		</dict>
+		<dict/>
+	</array>
+	<key>Calendars Write Only Access Usage Description</key>
+	<string>需要權限，以將電影上映日加入日曆</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>需要定位權限以取得當地影院與放映資訊</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>需要存取相簿以讓您選取大頭貼或上傳圖片</string>
+	<key>UIBackgroundModes</key>
+	<array/>
+</dict>
+</plist>

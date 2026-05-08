@@ -1,0 +1,112 @@
+# PrivacyInfo.xcprivacy
+
+# This file is a helper/template for the Xcode Privacy Manifest required by Apple (2024+).
+# Xcode expects a Privacy Manifest resource in the project. The safest way is to add it
+# through Xcode: Project -> Target -> Signing & Capabilities -> + Capability -> Privacy Manifest
+# or add a new "Privacy Manifest" file. Use the snippet below as the manifest contents / reasons.
+
+# Guidance:
+# - The project uses the following APIs that Apple considers "required reason" items:
+#   • UserDefaults (@AppStorage and manual writes) — used to store user preferences and small app state
+#   • FileManager.urls(for:in:) — used for cache/temporary files (image cache, downloads)
+#   • URLSession — network requests for fetching movie data, posters and syncing reviews
+#   • System boot time / uptime — may be accessed by third-party SDKs (e.g. Firebase) for analytics
+# - Add the manifest via Xcode so it is included in the build. The SDKs (Firebase/GoogleSignIn)
+#   may also include their own manifest entries; keep those and add app-specific entries here.
+
+# Example privacy manifest entries (human-readable). Paste or create equivalent entries in Xcode.
+
+# 1) User Defaults / App Storage
+# Identifier: com.apple.developer.user-defaults
+# Title: Local preferences and app settings
+# Purpose: Required to store user preferences and small app state (e.g. language choice, UI preferences,
+# review composer drafts) so the app can preserve user settings across launches and provide a better UX.
+
+# 2) File system (Cache / Temporary files)
+# Identifier: com.apple.developer.file-system-access
+# Title: Cache and temporary storage
+# Purpose: Required to persist cached images and temporary downloads to improve performance and offline
+# experience (e.g. movie posters, temporary downloads). Files are stored in app cache directories.
+
+# 3) Network (URLSession)
+# Identifier: com.apple.developer.networking
+# Title: Network access to fetch content
+# Purpose: Required to fetch movie metadata, posters, and to synchronize user reviews and ratings with backend
+# services (Firebase / custom APIs) using secure network requests.
+
+# 4) System boot time (uptime)
+# Identifier: com.apple.developer.device-boot-info
+# Title: System boot time accessed by SDKs
+# Purpose: Third-party SDKs (e.g. Firebase) may read system boot time to improve analytics or background
+# sync calculations. The app itself does not directly expose boot time to the user.
+
+# --- Sample JSON manifest snippet (for reference only) ---
+# Xcode's Privacy Manifest UI will create a .xcprivacy plist; below is a representative JSON-like
+# example used as guidance. Do NOT drop this raw JSON into the project unless you know Xcode will
+# accept it. Instead copy the Titles/Purposes into Xcode UI when creating the manifest.
+
+# {
+#   "privacy": [
+#     {
+#       "identifier": "com.apple.developer.user-defaults",
+#       "title": "Local preferences and app settings",
+#       "purpose": "Required to store user preferences and app settings (e.g. language, drafts) to preserve state across launches."
+#     },
+#     {
+#       "identifier": "com.apple.developer.file-system-access",
+#       "title": "Cache and temporary storage",
+#       "purpose": "Required to persist cached images and temporary downloads to improve offline experience and performance."
+#     },
+#     {
+#       "identifier": "com.apple.developer.networking",
+#       "title": "Network access to fetch content",
+#       "purpose": "Required to fetch movie data, posters, and to synchronize user reviews and ratings with backend services using secure network requests."
+#     },
+#     {
+#       "identifier": "com.apple.developer.device-boot-info",
+#       "title": "System boot time accessed by SDKs",
+#       "purpose": "Third-party SDKs (e.g. Firebase) may read system boot time for analytics/background sync."
+#     }
+#   ]
+# }
+
+# Next steps after adding this file:
+# 1) Open Xcode, add a Privacy Manifest capability or add a new Privacy Manifest file to the target.
+# 2) Use the titles/purposes above when populating the manifest entries in Xcode.
+# 3) Archive and validate before uploading to App Store Connect; Xcode will surface missing manifest issues
+#    during the upload/validation step.
+
+# App Store Connect — App Privacy mapping (what the app collects)
+#
+# The App Privacy questionnaire in App Store Connect should reflect the following data collection
+# based on current code and SDK usage. Please mark these appropriately when you submit:
+#
+# 1) Email Address
+#    - Collected: Yes (Firebase Authentication email used for sign-in).
+#    - Linked to identity: Yes (used for account and login).
+#    - Purpose: Authentication, account management, password reset.
+#
+# 2) Name
+#    - Collected: Yes (displayName from sign-in providers or user profile).
+#    - Linked to identity: Yes.
+#    - Purpose: Profile display, personalization.
+#
+# 3) User ID
+#    - Collected: Yes (Firebase UID used as user identifier and for reviews ownership).
+#    - Linked to identity: Yes.
+#    - Purpose: Associate content (reviews) and user data.
+#
+# 4) Photos
+#    - Collected: Yes (user-selected avatar uploaded via PhotosPicker / image upload flows).
+#    - Linked to identity: Yes (avatar associated with user profile in Firestore).
+#    - Purpose: User profile picture.
+#
+# 5) Diagnostic Data
+#    - Collected: Possibly No by app code (no explicit Firebase Analytics import found).
+#    - Action: If you include Firebase Analytics or Crashlytics in your build, mark Diagnostic Data = Yes.
+#      Otherwise mark No. Double-check your Package/Pods to confirm Analytics is not bundled.
+#
+# 6) User Content
+#    - Collected: Yes (reviews, comments, replies authored by users are stored in Firestore under reviews_v2/*).
+#    - Linked to identity: Yes (content is linked to userId unless anonymised).
+#    - Purpose: Display and moderation of user-generated reviews/comments.
