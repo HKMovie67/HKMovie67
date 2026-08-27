@@ -54,7 +54,17 @@ done
   echo "Release must contain exactly two APKs." >&2; exit 65;
 }
 
-gh release download "$release_tag" --repo "$repo" --dir "$assets_dir"
+downloaded=no
+for attempt in 1 2 3 4 5; do
+  rm -f "$assets_dir"/*
+  if gh release download "$release_tag" --repo "$repo" --dir "$assets_dir"; then
+    downloaded=yes
+    break
+  fi
+  echo "GitHub release asset download failed (attempt $attempt/5); retrying." >&2
+  sleep $((attempt * 2))
+done
+[[ "$downloaded" == yes ]] || { echo "Unable to download verified release assets." >&2; exit 69; }
 while IFS=$'\t' read -r name size digest; do
   file="$assets_dir/$name"
   [[ -f "$file" && $(wc -c <"$file" | tr -d ' ') == "$size" ]] || {
