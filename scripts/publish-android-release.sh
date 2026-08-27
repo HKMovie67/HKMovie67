@@ -24,11 +24,14 @@ gateway_service=${HKMOVIE67_GATEWAY_SERVICE:-hkmovie67}
 origin_service=${HKMOVIE67_ANDROID_ORIGIN_SERVICE:-hkmovie67-android}
 runtime_service_account=${HKMOVIE67_RUNTIME_SERVICE_ACCOUNT:-736766866304-compute@developer.gserviceaccount.com}
 patcher="$script_dir/patch-frontend-android-entry.mjs"
+rollback_helpers="$script_dir/android-release-rollback.sh"
 
 for command in curl docker gcloud gh grep jq node sha256sum; do
   command -v "$command" >/dev/null || { echo "Missing command: $command" >&2; exit 69; }
 done
 [[ -f "$patcher" ]] || { echo "Frontend Android route patcher is missing." >&2; exit 69; }
+[[ -f "$rollback_helpers" ]] || { echo "Android release rollback helpers are missing." >&2; exit 69; }
+source "$rollback_helpers"
 gh auth status >/dev/null 2>&1 || { echo "GitHub authentication is unavailable." >&2; exit 77; }
 gcloud auth print-access-token >/dev/null 2>&1 || { echo "Google keyless authentication is unavailable." >&2; exit 77; }
 
@@ -173,19 +176,9 @@ promoted=no
 rollback() {
   status=$?
   trap - EXIT
-  if [[ $status -ne 0 && "$promoted" == yes ]]; then
-    echo "Release verification failed; restoring gateway traffic to $previous_revision." >&2
-    gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" \
-      --to-revisions "$previous_revision=100" --quiet || true
-  fi
-  if [[ $status -ne 0 && "$release_visibility_changed" == yes ]]; then
-    echo "Release verification failed; restoring prior GitHub Release visibility." >&2
-    if [[ "$release_was_draft" == true ]]; then
-      gh release edit "$release_tag" --repo "$repo" --draft=true || true
-    elif [[ "$release_was_prerelease" == true ]]; then
-      gh release edit "$release_tag" --repo "$repo" --prerelease=true || true
-    fi
-  fi
+  restore_android_release_state "$status" "$promoted" "$release_visibility_changed" \
+    "$release_was_draft" "$release_was_prerelease" "$gateway_service" "$project" "$region" \
+    "$previous_revision" "$release_tag" "$repo"
   rm -rf "$work_dir"
   exit "$status"
 }
