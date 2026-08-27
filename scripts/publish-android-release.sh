@@ -93,6 +93,26 @@ armv7_sha=$(jq -r '.artifacts["armeabi-v7a"].sha256' "$manifest")
   echo "Release tag and update manifest disagree." >&2; exit 65;
 }
 
+assert_page_contract() {
+  page_file=$1
+  grep -F "最新版本 $version build $build" "$page_file" >/dev/null || {
+    echo "Android page metadata disagrees with the update manifest." >&2; return 65;
+  }
+  grep -F "<span>版本 $version</span>" "$page_file" >/dev/null || {
+    echo "Android page visible version disagrees with the update manifest." >&2; return 65;
+  }
+  grep -F "<span>Build $build</span>" "$page_file" >/dev/null || {
+    echo "Android page visible build disagrees with the update manifest." >&2; return 65;
+  }
+  page_builds=$(grep -Eio 'build[[:space:]]*[0-9]+' "$page_file" | grep -Eo '[0-9]+' | sort -u | tr '\n' ' ')
+  [[ "$page_builds" == "$build " ]] || {
+    echo "Android page contains a stale build number: $page_builds" >&2; return 65;
+  }
+}
+
+page="$assets_dir/android.html"
+assert_page_contract "$page"
+
 arm64_file=
 armv7_file=
 while IFS= read -r apk; do
@@ -105,10 +125,13 @@ done < <(find "$assets_dir" -maxdepth 1 -type f -name '*.apk' -print)
 }
 
 runtime_start="$assets_dir/runtime-start.sh"
-runtime_sha=$(sha256sum "$runtime_start" | awk '{print $1}')
 asset_base="https://github.com/$repo/releases/download/$release_tag"
 grep -F "asset_base='$asset_base'" "$runtime_start" >/dev/null || {
   echo "Runtime bootstrap does not target this immutable release." >&2; exit 65;
+}
+page_sha=$(sha256sum "$page" | awk '{print $1}')
+grep -F "download_asset 'android.html' '$page_sha'" "$runtime_start" >/dev/null || {
+  echo "Runtime bootstrap Android page hash is stale." >&2; exit 65;
 }
 
 gateway_json="$work_dir/gateway-before.json"
@@ -143,20 +166,30 @@ if [[ "$mode" == --preflight ]]; then
   exit 0
 fi
 
-if jq -e '.isDraft == true' "$release_json" >/dev/null; then
-  gh release edit "$release_tag" --repo "$repo" --draft=false --prerelease=false
-elif jq -e '.isPrerelease == true' "$release_json" >/dev/null; then
-  gh release edit "$release_tag" --repo "$repo" --prerelease=false
-fi
-
-public_dir="$work_dir/public"
-mkdir -p "$public_dir"
-while IFS=$'\t' read -r name _ digest; do
-  curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
-    "$asset_base/$name" --output "$public_dir/$name"
-  actual=$(sha256sum "$public_dir/$name" | awk '{print $1}')
-  [[ "$digest" == "sha256:$actual" ]] || { echo "Public release asset mismatch: $name" >&2; exit 65; }
-done < <(jq -r '.assets[] | [.name, (.size | tostring), .digest] | @tsv' "$release_json")
+release_was_draft=$(jq -r '.isDraft' "$release_json")
+release_was_prerelease=$(jq -r '.isPrerelease' "$release_json")
+release_visibility_changed=no
+promoted=no
+rollback() {
+  status=$?
+  trap - EXIT
+  if [[ $status -ne 0 && "$promoted" == yes ]]; then
+    echo "Release verification failed; restoring gateway traffic to $previous_revision." >&2
+    gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" \
+      --to-revisions "$previous_revision=100" --quiet || true
+  fi
+  if [[ $status -ne 0 && "$release_visibility_changed" == yes ]]; then
+    echo "Release verification failed; restoring prior GitHub Release visibility." >&2
+    if [[ "$release_was_draft" == true ]]; then
+      gh release edit "$release_tag" --repo "$repo" --draft=true || true
+    elif [[ "$release_was_prerelease" == true ]]; then
+      gh release edit "$release_tag" --repo "$repo" --prerelease=true || true
+    fi
+  fi
+  rm -rf "$work_dir"
+  exit "$status"
+}
+trap rollback EXIT
 
 build_context="$work_dir/image"
 mkdir -p "$build_context"
@@ -214,20 +247,6 @@ curl --retry 10 --retry-delay 2 --retry-all-errors -fsSL "$origin_url/android-up
   jq -e --arg arm64 "$arm64_sha" --arg armv7 "$armv7_sha" \
     '.artifacts["arm64-v8a"].sha256 == $arm64 and .artifacts["armeabi-v7a"].sha256 == $armv7' >/dev/null
 
-promoted=no
-rollback() {
-  status=$?
-  trap - EXIT
-  if [[ $status -ne 0 && "$promoted" == yes ]]; then
-    echo "Live verification failed; restoring gateway traffic to $previous_revision." >&2
-    gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" \
-      --to-revisions "$previous_revision=100" --quiet || true
-  fi
-  rm -rf "$work_dir"
-  exit "$status"
-}
-trap rollback EXIT
-
 gcloud run deploy "$gateway_service" --project "$project" --region "$region" --quiet \
   --no-traffic --tag android-gateway-candidate \
   --update-labels "hkmovie67_android_base_sha_a=$base_sha_a,hkmovie67_android_base_sha_b=$base_sha_b" \
@@ -251,19 +270,40 @@ jq -e --arg image "$origin_image_immutable" --arg sha_a "$base_sha_a" --arg sha_
 ' "$gateway_candidate_json" >/dev/null || { echo "Gateway candidate image provenance is invalid." >&2; exit 1; }
 curl --retry 20 --retry-delay 2 --retry-all-errors -fsSL "$candidate_url/api/health/android-entry" |
   jq -e --arg version "$version" --argjson build "$build" '.version == $version and .build == $build' >/dev/null
+curl --retry 10 --retry-delay 2 --retry-all-errors -fsSL "$candidate_url/android.html" \
+  --output "$work_dir/candidate-android.html"
+assert_page_contract "$work_dir/candidate-android.html"
 candidate_assets=$(curl -fsSL "$candidate_url/" | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
 [[ "$candidate_assets" == "$before_assets" ]] || { echo "Gateway candidate changed homepage assets." >&2; exit 1; }
 
-gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" --to-latest --quiet
+if [[ "$release_was_draft" == true || "$release_was_prerelease" == true ]]; then
+  release_visibility_changed=yes
+  gh release edit "$release_tag" --repo "$repo" --draft=false --prerelease=false
+fi
+
+public_dir="$work_dir/public"
+mkdir -p "$public_dir"
+while IFS=$'\t' read -r name _ digest; do
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+    "$asset_base/$name" --output "$public_dir/$name"
+  actual=$(sha256sum "$public_dir/$name" | awk '{print $1}')
+  [[ "$digest" == "sha256:$actual" ]] || { echo "Public release asset mismatch: $name" >&2; exit 65; }
+done < <(jq -r '.assets[] | [.name, (.size | tostring), .digest] | @tsv' "$release_json")
+
 promoted=yes
+gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" --to-latest --quiet
 live_health=$(curl --retry 20 --retry-delay 2 --retry-all-errors -fsSL https://hkmovie67.com/api/health/android-entry)
 jq -e --arg version "$version" --argjson build "$build" '.version == $version and .build == $build' <<<"$live_health" >/dev/null
 live_manifest=$(curl --retry 10 --retry-delay 2 --retry-all-errors -fsSL https://hkmovie67.com/android-update.json)
 jq -e --arg arm64 "$arm64_sha" --arg armv7 "$armv7_sha" \
   '.artifacts["arm64-v8a"].sha256 == $arm64 and .artifacts["armeabi-v7a"].sha256 == $armv7' <<<"$live_manifest" >/dev/null
+curl --retry 10 --retry-delay 2 --retry-all-errors -fsSL https://hkmovie67.com/android.html \
+  --output "$work_dir/live-android.html"
+assert_page_contract "$work_dir/live-android.html"
 after_assets=$(curl -fsSL https://hkmovie67.com/ | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
 [[ "$after_assets" == "$before_assets" ]] || { echo "Production homepage assets changed during Android publication." >&2; exit 1; }
 
 promoted=no
+release_visibility_changed=no
 trap cleanup EXIT
 echo "Published $release_tag through immutable origin $origin_url and gateway revision $candidate_revision."

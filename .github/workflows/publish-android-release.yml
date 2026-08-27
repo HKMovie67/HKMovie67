@@ -3,6 +3,14 @@ name: Publish Android release
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Verify only or publish after canary acceptance
+        required: true
+        default: preflight
+        type: choice
+        options:
+          - preflight
+          - apply
       release_tag:
         description: Existing Android release or draft tag
         required: true
@@ -39,4 +47,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HKMOVIE67_GCLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID }}
           HKMOVIE67_CLOUD_RUN_REGION: ${{ vars.GCP_REGION }}
-        run: bash scripts/publish-android-release.sh --apply "${{ inputs.release_tag }}"
+        run: bash scripts/publish-android-release.sh "--${{ inputs.mode }}" "${{ inputs.release_tag }}"
