@@ -172,6 +172,9 @@ if ! gcloud run services describe "$origin_service" --project "$project" --regio
 fi
 gcloud run deploy "$origin_service" --project "$project" --region "$region" --quiet \
   --image "$origin_image" --service-account "$runtime_service_account" \
+  --command node --args dist/server.cjs \
+  --set-env-vars "NODE_ENV=production,FRONTEND_ONLY=true,APP_URL=https://hkmovie67.com" \
+  --cpu 1 --memory 1Gi --timeout 900 --concurrency 1000 \
   "${origin_traffic_args[@]}" --allow-unauthenticated \
   --labels hkmovie67_android_origin=managed
 
