@@ -212,9 +212,10 @@ rollback() {
 }
 trap rollback EXIT
 
-gcloud run services update "$gateway_service" --project "$project" --region "$region" --quiet \
-  --container nginx-container --update-env-vars "ANDROID_SERVICE_ORIGIN=$origin_url" \
-  --no-traffic --tag android-gateway-candidate
+gcloud run deploy "$gateway_service" --project "$project" --region "$region" --quiet \
+  --no-traffic --tag android-gateway-candidate \
+  --container nginx-container --image "$gateway_base_image" \
+  --update-env-vars "ANDROID_SERVICE_ORIGIN=$origin_url"
 gateway_candidate_json="$work_dir/gateway-candidate.json"
 gcloud run services describe "$gateway_service" --project "$project" --region "$region" --format=json >"$gateway_candidate_json"
 candidate_revision=$(jq -r '.status.latestCreatedRevisionName' "$gateway_candidate_json")
