@@ -1,0 +1,42 @@
+name: Publish Android release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing Android release or draft tag
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: hkmovie67-android-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Check out release controls
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Authenticate to Google Cloud without a key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Publish verified release and switch Android origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HKMOVIE67_GCLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          HKMOVIE67_CLOUD_RUN_REGION: ${{ vars.GCP_REGION }}
+        run: bash scripts/publish-android-release.sh --apply "${{ inputs.release_tag }}"
