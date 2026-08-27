@@ -22,8 +22,13 @@ jobs:
 
       - name: Validate shell and JavaScript
         run: |
+          bash -n scripts/android-release-rollback.sh
           bash -n scripts/publish-android-release.sh
+          bash -n scripts/test-android-release-rollback.sh
           node --check scripts/patch-frontend-android-entry.mjs
+
+      - name: Test release rollback paths
+        run: bash scripts/test-android-release-rollback.sh
 
       - name: Validate workflow YAML
         run: |
