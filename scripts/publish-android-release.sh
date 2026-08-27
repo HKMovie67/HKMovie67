@@ -176,9 +176,11 @@ promoted=no
 rollback() {
   status=$?
   trap - EXIT
-  restore_android_release_state "$status" "$promoted" "$release_visibility_changed" \
+  if ! restore_android_release_state "$status" "$promoted" "$release_visibility_changed" \
     "$release_was_draft" "$release_was_prerelease" "$gateway_service" "$project" "$region" \
-    "$previous_revision" "$release_tag" "$repo"
+    "$previous_revision" "$release_tag" "$repo"; then
+    echo "CRITICAL: release rollback needs operator attention." >&2
+  fi
   rm -rf "$work_dir"
   exit "$status"
 }
@@ -284,7 +286,8 @@ while IFS=$'\t' read -r name _ digest; do
 done < <(jq -r '.assets[] | [.name, (.size | tostring), .digest] | @tsv' "$release_json")
 
 promoted=yes
-gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" --to-latest --quiet
+gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" \
+  --to-revisions "$candidate_revision=100" --quiet
 live_health=$(curl --retry 20 --retry-delay 2 --retry-all-errors -fsSL https://hkmovie67.com/api/health/android-entry)
 jq -e --arg version "$version" --argjson build "$build" '.version == $version and .build == $build' <<<"$live_health" >/dev/null
 live_manifest=$(curl --retry 10 --retry-delay 2 --retry-all-errors -fsSL https://hkmovie67.com/android-update.json)
