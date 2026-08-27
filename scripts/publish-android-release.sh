@@ -133,9 +133,15 @@ done < <(jq -r '.assets[] | [.name, (.size | tostring), .digest] | @tsv' "$relea
 
 bootstrap="set -eu; f=/tmp/hkmovie67-runtime-start.sh; curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location '$asset_base/runtime-start.sh' --output \"\$f\"; actual=\$(sha256sum \"\$f\" | awk '{print \$1}'); [ \"\$actual\" = '$runtime_sha' ] || exit 65; exec /bin/sh \"\$f\""
 origin_tag="android-build${build}"
+origin_traffic_args=(--no-traffic --tag "$origin_tag")
+if ! gcloud run services describe "$origin_service" --project "$project" --region "$region" >/dev/null 2>&1; then
+  # A brand-new isolated origin cannot use --no-traffic. It is not connected
+  # to the production gateway until all origin and gateway canary checks pass.
+  origin_traffic_args=(--tag "$origin_tag")
+fi
 gcloud run deploy "$origin_service" --project "$project" --region "$region" --quiet \
   --image "$base_image" --service-account "$runtime_service_account" \
-  --command /bin/sh --args="^~^-c~$bootstrap" --no-traffic --tag "$origin_tag" --allow-unauthenticated \
+  --command /bin/sh --args="^~^-c~$bootstrap" "${origin_traffic_args[@]}" --allow-unauthenticated \
   --labels hkmovie67_android_origin=managed
 
 origin_json="$work_dir/origin.json"
