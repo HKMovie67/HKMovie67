@@ -14,7 +14,8 @@ restore_android_release_state() {
   local repo=${11}
   local retry_delay=${ANDROID_RELEASE_ROLLBACK_RETRY_DELAY_SECONDS:-2}
   local rollback_failed=no
-  local attempt expected_filter restore_flag restored
+  local attempt expected_filter restored
+  local -a restore_flags=()
 
   [[ "$status" -ne 0 ]] || return 0
   if [[ "$promoted" == yes ]]; then
@@ -41,15 +42,19 @@ restore_android_release_state() {
     restored=no
     expected_filter=
     if [[ "$release_was_draft" == true ]]; then
-      restore_flag=--draft=true
+      restore_flags+=(--draft=true)
       expected_filter='.isDraft == true'
-    elif [[ "$release_was_prerelease" == true ]]; then
-      restore_flag=--prerelease=true
+    fi
+    if [[ "$release_was_prerelease" == true ]]; then
+      restore_flags+=(--prerelease=true)
       expected_filter='.isPrerelease == true'
+    fi
+    if [[ "$release_was_draft" == true && "$release_was_prerelease" == true ]]; then
+      expected_filter='.isDraft == true and .isPrerelease == true'
     fi
     if [[ -n "$expected_filter" ]]; then
       for attempt in 1 2 3; do
-        if gh release edit "$release_tag" --repo "$repo" "$restore_flag" \
+        if gh release edit "$release_tag" --repo "$repo" "${restore_flags[@]}" \
           && gh release view "$release_tag" --repo "$repo" --json isDraft,isPrerelease \
             | jq -e "$expected_filter" >/dev/null; then
           restored=yes
