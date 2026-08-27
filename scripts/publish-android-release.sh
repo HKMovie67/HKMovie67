@@ -17,16 +17,18 @@ if [[ ! "$release_tag" =~ ^android-v[0-9]+\.[0-9]+\.[0-9]+-build[0-9]+$ ]]; then
 fi
 
 repo=${HKMOVIE67_RELEASE_REPOSITORY:-HKMovie67/HKMovie67}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project=${HKMOVIE67_GCLOUD_PROJECT:-gen-lang-client-0178764531}
 region=${HKMOVIE67_CLOUD_RUN_REGION:-us-west1}
 gateway_service=${HKMOVIE67_GATEWAY_SERVICE:-hkmovie67}
 origin_service=${HKMOVIE67_ANDROID_ORIGIN_SERVICE:-hkmovie67-android}
 runtime_service_account=${HKMOVIE67_RUNTIME_SERVICE_ACCOUNT:-736766866304-compute@developer.gserviceaccount.com}
-base_image=${HKMOVIE67_ANDROID_BASE_IMAGE:-us-west1-docker.pkg.dev/ai-studio-registry-prod/ai-studio/deploy-container@sha256:b2ad2b869a8118c9dbac684a9fed971c5298f90e1ea2d2efd21bff5567975e8e}
+patcher="$script_dir/patch-frontend-android-entry.mjs"
 
-for command in curl gcloud gh grep jq sha256sum; do
+for command in curl docker gcloud gh grep jq node sha256sum; do
   command -v "$command" >/dev/null || { echo "Missing command: $command" >&2; exit 69; }
 done
+[[ -f "$patcher" ]] || { echo "Frontend Android route patcher is missing." >&2; exit 69; }
 gh auth status >/dev/null 2>&1 || { echo "GitHub authentication is unavailable." >&2; exit 77; }
 gcloud auth print-access-token >/dev/null 2>&1 || { echo "Google keyless authentication is unavailable." >&2; exit 77; }
 
@@ -106,6 +108,10 @@ jq -e '
   .metadata.annotations["generativelanguage.googleapis.com/type"] == "fullstack-applet" and
   ([.spec.template.spec.containers[].name] == ["nginx-container"])
 ' "$gateway_json" >/dev/null || { echo "Frontend gateway ownership or container contract changed." >&2; exit 65; }
+gateway_base_image=$(jq -r '.spec.template.spec.containers[] | select(.name == "nginx-container") | .image' "$gateway_json")
+[[ "$gateway_base_image" == us-west1-docker.pkg.dev/gen-lang-client-0178764531/hkmovie67-release/web@sha256:* ]] || {
+  echo "Frontend gateway image is not an immutable approved project image." >&2; exit 65;
+}
 previous_revision=$(jq -r '.status.traffic[] | select((.percent // 0) == 100) | .revisionName' "$gateway_json" | head -1)
 [[ -n "$previous_revision" ]] || { echo "Frontend gateway lacks one 100% production revision." >&2; exit 65; }
 before_assets=$(curl -fsSL https://hkmovie67.com/ | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
@@ -131,7 +137,32 @@ while IFS=$'\t' read -r name _ digest; do
   [[ "$digest" == "sha256:$actual" ]] || { echo "Public release asset mismatch: $name" >&2; exit 65; }
 done < <(jq -r '.assets[] | [.name, (.size | tostring), .digest] | @tsv' "$release_json")
 
-bootstrap="set -eu; f=/tmp/hkmovie67-runtime-start.sh; curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location '$asset_base/runtime-start.sh' --output \"\$f\"; actual=\$(sha256sum \"\$f\" | awk '{print \$1}'); [ \"\$actual\" = '$runtime_sha' ] || exit 65; exec /bin/sh \"\$f\""
+build_context="$work_dir/image"
+mkdir -p "$build_context"
+cp "$assets_dir/android.html" "$assets_dir/android-icon.png" "$assets_dir/delete-account.html" \
+  "$assets_dir/android-update.json" "$patcher" "$build_context/"
+cat >"$build_context/Dockerfile" <<'DOCKERFILE'
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG RELEASE_TAG
+ARG ARM64_FILE
+ARG ARMV7_FILE
+USER root
+COPY android.html android-icon.png delete-account.html android-update.json /app/dist/
+COPY patch-frontend-android-entry.mjs /tmp/patch-frontend-android-entry.mjs
+RUN node /tmp/patch-frontend-android-entry.mjs /app/dist/server.cjs /app/dist/android-update.json "$RELEASE_TAG" "$ARM64_FILE" "$ARMV7_FILE" \
+    && chown node:node /app/dist/server.cjs /app/dist/android.html /app/dist/android-icon.png /app/dist/delete-account.html /app/dist/android-update.json \
+    && rm /tmp/patch-frontend-android-entry.mjs
+USER node
+DOCKERFILE
+manifest_sha=$(sha256sum "$manifest" | awk '{print $1}')
+origin_image="us-west1-docker.pkg.dev/$project/hkmovie67-release/android-origin:build-${build}-${manifest_sha:0:12}"
+gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+docker build "$build_context" --file "$build_context/Dockerfile" --tag "$origin_image" \
+  --build-arg "BASE_IMAGE=$gateway_base_image" --build-arg "RELEASE_TAG=$release_tag" \
+  --build-arg "ARM64_FILE=$arm64_file" --build-arg "ARMV7_FILE=$armv7_file"
+docker push "$origin_image"
+
 origin_tag="android-build${build}"
 origin_traffic_args=(--no-traffic --tag "$origin_tag")
 if ! gcloud run services describe "$origin_service" --project "$project" --region "$region" >/dev/null 2>&1; then
@@ -140,8 +171,8 @@ if ! gcloud run services describe "$origin_service" --project "$project" --regio
   origin_traffic_args=(--tag "$origin_tag")
 fi
 gcloud run deploy "$origin_service" --project "$project" --region "$region" --quiet \
-  --image "$base_image" --service-account "$runtime_service_account" \
-  --command /bin/sh --args="^~^-c~$bootstrap" "${origin_traffic_args[@]}" --allow-unauthenticated \
+  --image "$origin_image" --service-account "$runtime_service_account" \
+  "${origin_traffic_args[@]}" --allow-unauthenticated \
   --labels hkmovie67_android_origin=managed
 
 origin_json="$work_dir/origin.json"
