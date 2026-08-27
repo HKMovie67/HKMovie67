@@ -118,10 +118,21 @@ jq -e '
   .metadata.annotations["generativelanguage.googleapis.com/type"] == "fullstack-applet" and
   ([.spec.template.spec.containers[].name] == ["nginx-container"])
 ' "$gateway_json" >/dev/null || { echo "Frontend gateway ownership or container contract changed." >&2; exit 65; }
-gateway_base_image=$(jq -r '.spec.template.spec.containers[] | select(.name == "nginx-container") | .image' "$gateway_json")
-[[ "$gateway_base_image" == us-west1-docker.pkg.dev/gen-lang-client-0178764531/hkmovie67-release/web@sha256:* ]] || {
-  echo "Frontend gateway image is not an immutable approved project image." >&2; exit 65;
-}
+gateway_current_image=$(jq -r '.spec.template.spec.containers[] | select(.name == "nginx-container") | .image' "$gateway_json")
+if [[ "$gateway_current_image" == us-west1-docker.pkg.dev/gen-lang-client-0178764531/hkmovie67-release/web@sha256:* ]]; then
+  gateway_base_image="$gateway_current_image"
+else
+  base_sha_a=$(jq -r '.metadata.labels.hkmovie67_android_base_sha_a // empty' "$gateway_json")
+  base_sha_b=$(jq -r '.metadata.labels.hkmovie67_android_base_sha_b // empty' "$gateway_json")
+  [[ "$gateway_current_image" == us-west1-docker.pkg.dev/gen-lang-client-0178764531/hkmovie67-release/android-origin@sha256:* \
+    && "$base_sha_a$base_sha_b" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Frontend gateway image lacks approved Android base provenance." >&2; exit 65;
+  }
+  gateway_base_image="us-west1-docker.pkg.dev/gen-lang-client-0178764531/hkmovie67-release/web@sha256:$base_sha_a$base_sha_b"
+fi
+gateway_base_digest=${gateway_base_image##*@sha256:}
+base_sha_a=${gateway_base_digest:0:32}
+base_sha_b=${gateway_base_digest:32:32}
 previous_revision=$(jq -r '.status.traffic[] | select((.percent // 0) == 100) | .revisionName' "$gateway_json" | head -1)
 [[ -n "$previous_revision" ]] || { echo "Frontend gateway lacks one 100% production revision." >&2; exit 65; }
 before_assets=$(curl -fsSL https://hkmovie67.com/ | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
@@ -172,6 +183,11 @@ docker build "$build_context" --file "$build_context/Dockerfile" --tag "$origin_
   --build-arg "BASE_IMAGE=$gateway_base_image" --build-arg "RELEASE_TAG=$release_tag" \
   --build-arg "ARM64_FILE=$arm64_file" --build-arg "ARMV7_FILE=$armv7_file"
 docker push "$origin_image"
+origin_image_immutable=$(gcloud artifacts docker images describe "$origin_image" \
+  --format='value(image_summary.fully_qualified_digest)')
+[[ "$origin_image_immutable" == us-west1-docker.pkg.dev/"$project"/hkmovie67-release/android-origin@sha256:* ]] || {
+  echo "Unable to resolve the Android origin image digest." >&2; exit 65;
+}
 
 origin_tag="android-build${build}"
 origin_traffic_args=(--no-traffic --tag "$origin_tag")
@@ -181,7 +197,7 @@ if ! gcloud run services describe "$origin_service" --project "$project" --regio
   origin_traffic_args=(--tag "$origin_tag")
 fi
 gcloud run deploy "$origin_service" --project "$project" --region "$region" --quiet \
-  --image "$origin_image" --service-account "$runtime_service_account" \
+  --image "$origin_image_immutable" --service-account "$runtime_service_account" \
   --command node --args dist/server.cjs \
   --set-env-vars "NODE_ENV=production,FRONTEND_ONLY=true,APP_URL=https://hkmovie67.com" \
   --cpu 1 --memory 1Gi --timeout 900 --concurrency 1000 \
@@ -214,7 +230,8 @@ trap rollback EXIT
 
 gcloud run deploy "$gateway_service" --project "$project" --region "$region" --quiet \
   --no-traffic --tag android-gateway-candidate \
-  --container nginx-container --image "$gateway_base_image" \
+  --update-labels "hkmovie67_android_base_sha_a=$base_sha_a,hkmovie67_android_base_sha_b=$base_sha_b" \
+  --container nginx-container --image "$origin_image_immutable" \
   --update-env-vars "ANDROID_SERVICE_ORIGIN=$origin_url"
 gateway_candidate_json="$work_dir/gateway-candidate.json"
 gcloud run services describe "$gateway_service" --project "$project" --region "$region" --format=json >"$gateway_candidate_json"
@@ -227,6 +244,11 @@ jq -e --arg previous "$previous_revision" --arg candidate "$candidate_revision" 
   any(.status.traffic[]; (.percent // 0) == 100 and .revisionName == $previous) and
   .status.latestCreatedRevisionName == $candidate
 ' "$gateway_candidate_json" >/dev/null || { echo "Gateway traffic drifted before promotion." >&2; exit 1; }
+jq -e --arg image "$origin_image_immutable" --arg sha_a "$base_sha_a" --arg sha_b "$base_sha_b" '
+  .metadata.labels.hkmovie67_android_base_sha_a == $sha_a and
+  .metadata.labels.hkmovie67_android_base_sha_b == $sha_b and
+  any(.spec.template.spec.containers[]; .name == "nginx-container" and .image == $image)
+' "$gateway_candidate_json" >/dev/null || { echo "Gateway candidate image provenance is invalid." >&2; exit 1; }
 curl --retry 20 --retry-delay 2 --retry-all-errors -fsSL "$candidate_url/api/health/android-entry" |
   jq -e --arg version "$version" --argjson build "$build" '.version == $version and .build == $build' >/dev/null
 candidate_assets=$(curl -fsSL "$candidate_url/" | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
