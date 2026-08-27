@@ -30,11 +30,16 @@ gh() {
   elif [[ "$1 $2 $3" == 'release edit release-2' || "$1 $2 $3" == 'release edit release-4' ]]; then
     [[ "$mock_release_edit_fail" != yes ]] || return 1
     mock_release_state=prerelease
+  elif [[ "$1 $2 $3" == 'release edit release-5' ]]; then
+    [[ "$*" == *'--draft=true'* && "$*" == *'--prerelease=true'* ]] || return 1
+    mock_release_state=draft-prerelease
   elif [[ "$1 $2" == 'release view' ]]; then
     if [[ "$mock_release_state" == draft ]]; then
       printf '{"isDraft":true,"isPrerelease":false}\n'
     elif [[ "$mock_release_state" == prerelease ]]; then
       printf '{"isDraft":false,"isPrerelease":true}\n'
+    elif [[ "$mock_release_state" == draft-prerelease ]]; then
+      printf '{"isDraft":true,"isPrerelease":true}\n'
     else
       printf '{"isDraft":false,"isPrerelease":false}\n'
     fi
@@ -63,6 +68,12 @@ if restore_android_release_state 1 yes yes false true gateway project region rev
 fi
 [[ $(grep -c 'gcloud run services update-traffic' "$calls") -eq 3 ]]
 grep -F 'gh release edit release-4 --repo owner/repo --prerelease=true' "$calls" >/dev/null
+
+: >"$calls"
+mock_release_state=public
+mock_traffic_update_fail=no
+restore_android_release_state 1 no yes true true gateway project region revision-5 release-5 owner/repo
+grep -F 'gh release edit release-5 --repo owner/repo --draft=true --prerelease=true' "$calls" >/dev/null
 
 : >"$calls"
 mock_traffic_update_fail=no
