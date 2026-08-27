@@ -24,7 +24,7 @@ origin_service=${HKMOVIE67_ANDROID_ORIGIN_SERVICE:-hkmovie67-android}
 runtime_service_account=${HKMOVIE67_RUNTIME_SERVICE_ACCOUNT:-736766866304-compute@developer.gserviceaccount.com}
 base_image=${HKMOVIE67_ANDROID_BASE_IMAGE:-us-west1-docker.pkg.dev/ai-studio-registry-prod/ai-studio/deploy-container@sha256:b2ad2b869a8118c9dbac684a9fed971c5298f90e1ea2d2efd21bff5567975e8e}
 
-for command in curl gcloud gh jq node rg sha256sum; do
+for command in curl gcloud gh grep jq sha256sum; do
   command -v "$command" >/dev/null || { echo "Missing command: $command" >&2; exit 69; }
 done
 gh auth status >/dev/null 2>&1 || { echo "GitHub authentication is unavailable." >&2; exit 77; }
@@ -95,7 +95,7 @@ done < <(find "$assets_dir" -maxdepth 1 -type f -name '*.apk' -print)
 runtime_start="$assets_dir/runtime-start.sh"
 runtime_sha=$(sha256sum "$runtime_start" | awk '{print $1}')
 asset_base="https://github.com/$repo/releases/download/$release_tag"
-rg -F "asset_base='$asset_base'" "$runtime_start" >/dev/null || {
+grep -F "asset_base='$asset_base'" "$runtime_start" >/dev/null || {
   echo "Runtime bootstrap does not target this immutable release." >&2; exit 65;
 }
 
@@ -108,7 +108,7 @@ jq -e '
 ' "$gateway_json" >/dev/null || { echo "Frontend gateway ownership or container contract changed." >&2; exit 65; }
 previous_revision=$(jq -r '.status.traffic[] | select((.percent // 0) == 100) | .revisionName' "$gateway_json" | head -1)
 [[ -n "$previous_revision" ]] || { echo "Frontend gateway lacks one 100% production revision." >&2; exit 65; }
-before_assets=$(curl -fsSL https://hkmovie67.com/ | rg -o '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
+before_assets=$(curl -fsSL https://hkmovie67.com/ | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
 [[ -n "$before_assets" ]] || { echo "Unable to capture production homepage assets." >&2; exit 65; }
 
 if [[ "$mode" == --preflight ]]; then
@@ -178,7 +178,7 @@ jq -e --arg previous "$previous_revision" --arg candidate "$candidate_revision" 
 ' "$gateway_candidate_json" >/dev/null || { echo "Gateway traffic drifted before promotion." >&2; exit 1; }
 curl --retry 20 --retry-delay 2 --retry-all-errors -fsSL "$candidate_url/api/health/android-entry" |
   jq -e --arg version "$version" --argjson build "$build" '.version == $version and .build == $build' >/dev/null
-candidate_assets=$(curl -fsSL "$candidate_url/" | rg -o '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
+candidate_assets=$(curl -fsSL "$candidate_url/" | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
 [[ "$candidate_assets" == "$before_assets" ]] || { echo "Gateway candidate changed homepage assets." >&2; exit 1; }
 
 gcloud run services update-traffic "$gateway_service" --project "$project" --region "$region" --to-latest --quiet
@@ -188,7 +188,7 @@ jq -e --arg version "$version" --argjson build "$build" '.version == $version an
 live_manifest=$(curl --retry 10 --retry-delay 2 --retry-all-errors -fsSL https://hkmovie67.com/android-update.json)
 jq -e --arg arm64 "$arm64_sha" --arg armv7 "$armv7_sha" \
   '.artifacts["arm64-v8a"].sha256 == $arm64 and .artifacts["armeabi-v7a"].sha256 == $armv7' <<<"$live_manifest" >/dev/null
-after_assets=$(curl -fsSL https://hkmovie67.com/ | rg -o '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
+after_assets=$(curl -fsSL https://hkmovie67.com/ | grep -Eo '/assets/index-[A-Za-z0-9_-]+\.(js|css)' | sort -u)
 [[ "$after_assets" == "$before_assets" ]] || { echo "Production homepage assets changed during Android publication." >&2; exit 1; }
 
 promoted=no
