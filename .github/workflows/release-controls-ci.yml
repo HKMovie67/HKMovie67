@@ -1,0 +1,31 @@
+name: Validate release controls
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  release-controls:
+    name: release-controls
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out release controls
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Validate shell and JavaScript
+        run: |
+          bash -n scripts/publish-android-release.sh
+          node --check scripts/patch-frontend-android-entry.mjs
+
+      - name: Validate workflow YAML
+        run: |
+          ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/publish-android-release.yml")'
+          ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/release-controls-ci.yml")'
